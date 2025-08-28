@@ -44,6 +44,8 @@ export default function Scene() {
   const [resetSignals, setResetSignals] = useState<Record<string, number>>({});
   // Global reset counter to force all cubes to clear internal placed state
   const [globalResetCounter, setGlobalResetCounter] = useState(0);
+  // Synchronous occupancy lock to avoid race conditions on drop
+  const occupiedRef = useRef<Set<number>>(new Set());
 
   const FILL_THRESHOLD: Record<Letter, number> = useMemo(
     () => ({ N: 2, E: 2, X: 2, T: 2 }),
@@ -57,6 +59,15 @@ export default function Scene() {
       position: [c.position[0] - centerX, c.position[1] - 2, c.position[2]],
     }));
   }, [cells, width, minX]);
+
+  // Keep the synchronous occupancy lock in sync with React state
+  useEffect(() => {
+    const set = new Set<number>();
+    for (let i = 0; i < cells.length; i++) {
+      if (cells[i].occupiedBy) set.add(i);
+    }
+    occupiedRef.current = set;
+  }, [cells]);
 
   // Compute the horizontal center (x) of each letter cluster using min/max extents
   const letterCenters: Record<Letter, number> = useMemo(() => {
@@ -132,7 +143,8 @@ export default function Scene() {
     let bestDist = Infinity;
     for (let i = 0; i < centeredCells.length; i++) {
       const cell = centeredCells[i];
-      if (cell.occupiedBy) continue;
+      // Skip cells already occupied (state) or tentatively claimed (ref)
+      if (cell.occupiedBy || occupiedRef.current.has(i)) continue;
       const dist = worldPos.distanceTo(new THREE.Vector3(...cell.position));
       if (dist < bestDist) {
         bestDist = dist;
@@ -258,6 +270,8 @@ export default function Scene() {
         occupiedBy: null,
       }))
     );
+    // Clear occupancy lock
+    occupiedRef.current.clear();
   }, [rawCells]);
 
   // When the game is complete, automatically reset after a short delay
@@ -393,6 +407,7 @@ export default function Scene() {
               onDragStart={() => {
                 const cellIndex = placed[a.id];
                 if (cellIndex === undefined) return;
+                occupiedRef.current.delete(cellIndex);
                 setCells((prev) => {
                   const next = [...prev];
                   const cell = next[cellIndex];
@@ -415,6 +430,10 @@ export default function Scene() {
                   snap.snapPos &&
                   typeof snap.cellIndex === "number"
                 ) {
+                  if (occupiedRef.current.has(snap.cellIndex)) {
+                    return { success: false };
+                  }
+                  occupiedRef.current.add(snap.cellIndex);
                   handlePlaced(a, snap.cellIndex);
                   return { success: true, snapPos: snap.snapPos };
                 }

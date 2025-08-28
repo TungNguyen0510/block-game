@@ -14,12 +14,12 @@ export default function StaticCube({
       <boxGeometry args={[1, 1, 1]} />
       <MeshTransmissionMaterial
         color={color}
-        roughness={0.1}
-        metalness={0.8}
-        transparent={true}
-        opacity={0.9}
+        roughness={0.15}
+        metalness={0.2}
         transmission={0.5}
-        clearcoat={1}
+        clearcoat={0.5}
+        transparent={true}
+        samples={6}
       />
     </mesh>
   );

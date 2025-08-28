@@ -5,6 +5,9 @@ import * as THREE from "three";
 import { MeshTransmissionMaterial, Text } from "@react-three/drei";
 import { MAIN_COLOR } from "@/constants/colors";
 
+// Global drag mutex: ensures only one cube can start/receive drag at a time
+let GLOBAL_DRAG_ACTIVE = false;
+
 export default function DraggableCube({
   startPos,
   label,
@@ -40,7 +43,7 @@ export default function DraggableCube({
    */
   onDragStart?: () => void;
 }) {
-  const meshRef = useRef<THREE.Mesh>(null!);
+  const groupRef = useRef<THREE.Mesh>(null!);
   const { camera } = useThree();
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -56,7 +59,13 @@ export default function DraggableCube({
   }, [startPos]);
 
   const bind = useDrag(({ event, active }) => {
+    // Stop r3f event bubbling to sibling meshes (overlapping hit-tests)
+    (event as PointerEvent).stopPropagation?.();
+
+    // Guard: allow only a single active drag across all cubes
     if (active && !isDragging) {
+      if (GLOBAL_DRAG_ACTIVE) return;
+      GLOBAL_DRAG_ACTIVE = true;
       if (onDragStart) onDragStart();
       // When starting a new drag, consider this cube no longer placed
       setIsPlaced(false);
@@ -75,10 +84,10 @@ export default function DraggableCube({
       // Keep the cube visually at its original Z (staging Z) while dragging
       const displayPos = pos.clone();
       displayPos.z = startRef.current[2];
-      meshRef.current.position.copy(displayPos);
+      groupRef.current.position.copy(displayPos);
       // Add a subtle diagonal tilt on X and Y while dragging for feedback
       // Keep it small to avoid disorientation
-      meshRef.current.rotation.set(0, 0, 0.05);
+      groupRef.current.rotation.set(0, 0, -0.05);
     } else {
       // Use z=0 for snapping calculations, but keep visual z at staging on placement
       const posForSnap = pos.clone();
@@ -87,57 +96,62 @@ export default function DraggableCube({
       if (result.success && result.snapPos) {
         const snapPos = result.snapPos.clone();
         snapPos.z = startRef.current[2];
-        meshRef.current.position.copy(snapPos);
+        groupRef.current.position.copy(snapPos);
         // brief pulse to indicate successful snap
         setSnapPulse(true);
         setTimeout(() => setSnapPulse(false), 150);
         setIsPlaced(true);
       } else {
         // Revert to start position if drop is rejected
-        meshRef.current.position.set(...startRef.current);
+        groupRef.current.position.set(...startRef.current);
         setIsPlaced(false);
       }
       // Reset rotation after dropping
-      meshRef.current.rotation.set(0, 0, 0);
+      groupRef.current.rotation.set(0, 0, 0);
+      // Release global drag mutex once the drag ends
+      GLOBAL_DRAG_ACTIVE = false;
     }
   });
 
   // External reset: when the signal changes, move back to the start position
   useEffect(() => {
-    if (!meshRef.current) return;
-    meshRef.current.position.set(...startRef.current);
+    if (!groupRef.current) return;
+    groupRef.current.position.set(...startRef.current);
     // Ensure rotation is reset on external reset as well
-    meshRef.current.rotation.set(0, 0, 0);
+    groupRef.current.rotation.set(0, 0, 0);
     setIsPlaced(false);
   }, [resetSignal]);
 
   // Global reset: ensure isPlaced is cleared even if ids repeat across rounds
   useEffect(() => {
-    if (!meshRef.current) return;
-    meshRef.current.position.set(...startRef.current);
-    meshRef.current.rotation.set(0, 0, 0);
+    if (!groupRef.current) return;
+    groupRef.current.position.set(...startRef.current);
+    groupRef.current.rotation.set(0, 0, 0);
     setIsPlaced(false);
   }, [globalResetSignal]);
 
   if (hidden) return null;
 
   return (
-    <mesh
-      ref={meshRef}
+    <group
+      ref={groupRef}
       position={startPos}
-      scale={snapPulse ? 1.08 : 1}
+      // scale={snapPulse ? 1.05 : 1}
+      onPointerDown={(e) => e.stopPropagation()}
       {...(locked ? {} : bind())}
     >
-      <boxGeometry args={[1, 1, 1]} />
-      <MeshTransmissionMaterial
-        color={isPlaced ? MAIN_COLOR : "white"}
-        roughness={0.1}
-        metalness={0.8}
-        transparent={true}
-        opacity={0.9}
-        transmission={0.5}
-        clearcoat={1}
-      />
+      <mesh>
+        <boxGeometry args={[1, 1, 1]} />
+        <MeshTransmissionMaterial
+          color={isPlaced ? MAIN_COLOR : "white"}
+          roughness={0.15}
+          metalness={0.2}
+          transmission={0.5}
+          clearcoat={0.5}
+          transparent={true}
+          samples={6}
+        />
+      </mesh>
       <Text
         position={[-0.46, -0.2, 0.51]}
         fontSize={0.12}
@@ -151,6 +165,6 @@ export default function DraggableCube({
       >
         {label}
       </Text>
-    </mesh>
+    </group>
   );
 }
